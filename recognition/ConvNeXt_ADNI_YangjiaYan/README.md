@@ -16,8 +16,10 @@ Chosen project: ADNI classification with ConvNeXt, Hard difficulty.
 ### Scope and acceptance criteria
 
 The project compares a CNN trained from scratch with a pretrained
-ConvNeXt-Tiny for AD versus NC classification. It also examines whether
-prediction confidence can help select patients for review.
+ConvNeXt-Tiny for AD versus NC classification. The intended user is an
+MRI reviewer assessing predictions and deciding which patients need
+further review. The prototype tests whether confidence helps with this
+selection.
 
 The five acceptance criteria were:
 
@@ -29,6 +31,13 @@ The five acceptance criteria were:
 5. Measurement of GPU memory and inference latency, with training
    feasible on one A100 GPU with 40 GB VRAM.
 
+### Model choice and course concepts
+
+ConvNeXt-Tiny [1, 2] combines convolutional feature learning and residual
+connections. ImageNet pretraining allows transfer learning on MRI slices;
+cross-entropy and AdamW provide supervised optimisation. The small CNN
+tests whether this added model complexity improves the same task.
+
 ### Evidence and resource plan
 
 The initial audit found 30,520 slices from 1,526 scans and 680 patients,
@@ -39,11 +48,15 @@ Before test evaluation, both models had completed 15 epochs on Rangpur.
 The CNN reached validation slice Macro-F1 of 0.8339 in 7.1 minutes;
 ConvNeXt reached 0.8600 in 21.1 minutes. These runs showed that the
 project was feasible with one A100 GPU and four CPU cores per job.
+Each training job requested a two-hour limit; the two final training
+runs used about 28.2 minutes in total, excluding queue time.
 
 The main risks were patient leakage, unstable CNN validation results,
 ConvNeXt overfitting and confident errors. The plan used a fixed patient
 manifest, validation-based checkpoint selection and held-out testing.
 The smaller CNN was the fallback if ConvNeXt proved too costly.
+The next planned steps were fixed-checkpoint test evaluation, GPU
+profiling and analysis of confidence and misclassifications.
 
 ### Tutor feedback
 
@@ -139,6 +152,8 @@ All splits use tensor conversion and ImageNet normalisation:
 
 - Mean: [0.485, 0.456, 0.406]
 - Standard deviation: [0.229, 0.224, 0.225]
+
+Normalisation follows the Torchvision pretrained input convention [2].
 
 Validation and test transforms contain no random augmentation.
 
@@ -512,7 +527,10 @@ for other paths; it has no command-line arguments.
 
 Training configurations and epoch metrics are saved in `history.json`.
 Validation evaluation reproduced the selected checkpoints' saved scores
-within numerical tolerance.
+within numerical tolerance. Retraining with a different GPU or software
+version may produce different weights and scores. To reproduce the
+workflow without the author's checkpoints, generate the manifest, run
+the two training scripts, then evaluate their saved checkpoints.
 
 ## Figures
 
@@ -563,17 +581,49 @@ high-confidence errors.
 - **Case 5:** the CNN identified NC, but ConvNeXt predicted AD. Its
   83.0% confidence also passed the retention threshold.
 
-Cases 2 and 5 show that the stronger model still made errors the baseline
-avoided. Cases 1 and 4 show that agreement alone would miss shared
-errors. The darker slice in Case 5 suggests checking image intensity,
-and the other cases warrant examining predictions across slices and
-scans. The displayed images alone do not establish an anatomical cause.
+### Slice and scan audit
+
+The saved predictions were grouped by scan and patient to examine where
+these errors arose. Recomputing the scan means and then the patient
+means reproduced the saved patient probabilities.
+
+| Case | Slices / scans | CNN wrong slices | ConvNeXt wrong slices | CNN wrong scans | ConvNeXt wrong scans |
+|---|---:|---:|---:|---:|---:|
+| 1 | 60 / 3 | 53.3% | 96.7% | 2/3 | 3/3 |
+| 2 | 20 / 1 | 25.0% | 95.0% | 0/1 | 1/1 |
+| 3 | 20 / 1 | 55.0% | 90.0% | 1/1 | 1/1 |
+| 4 | 20 / 1 | 100.0% | 95.0% | 1/1 | 1/1 |
+| 5 | 40 / 2 | 45.0% | 85.0% | 1/2 | 2/2 |
+
+In Case 1, ConvNeXt assigned scan-level P(AD) values from 0.0017 to
+0.1080 across three scans. All three missed AD. In Case 5, both scans
+were incorrectly classified as AD, with probabilities of 0.8168 and
+0.8431. These errors were already present across scans before patient
+averaging. Cases 2, 3 and 4 each had one scan, so averaging multiple
+scans cannot explain their patient-level errors either.
+
+The CNN showed a different pattern. It correctly classified most slices
+in Case 2 and identified the patient as AD. In Case 5, one scan was
+correct and one was wrong; their mean of 0.4560 gave the correct NC
+prediction. Case 4 was a shared failure: every CNN slice and 95% of
+ConvNeXt slices were wrong.
+
+Across the five ConvNeXt cases, 85.0%–96.7% of slices and every scan
+were wrong. The main observed failure was a prediction that remained
+wrong across many slices, rather than an isolated misleading slice.
+The audit identifies this pattern but does not establish its anatomical
+or acquisition-related cause.
+
+Run `python analyse_failure_cases.py` to reproduce the audit from the
+saved predictions. The case summaries and scan results are in
+`results/failure_audit/case_summary.csv` and
+`results/failure_audit/scan_details.csv`.
 
 ## Practical recommendation
 
-ConvNeXt is the stronger model for further work, correctly classifying
-89 of 102 test patients versus 80 for the CNN. The CNN remains useful
-where lower memory use and latency matter.
+I recommend ConvNeXt for further evaluation with human review. It
+correctly classified 89 of 102 test patients versus 80 for the CNN.
+The CNN remains useful where lower memory use and latency matter.
 
 The confidence rule flagged seven of ConvNeXt's 13 errors, but left
 six among retained patients, including four missed AD cases. Further
