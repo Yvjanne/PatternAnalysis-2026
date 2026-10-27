@@ -6,8 +6,8 @@ This project compares a small CNN trained from scratch with an
 ImageNet-pretrained ConvNeXt-Tiny fine-tuned for binary classification
 of Alzheimer's disease (AD) and normal controls (NC).
 
-The experiments adapt ConvNeXt to ADNI MRI slices. They do not reproduce
-the original paper's ImageNet experiments.
+The project adapts ConvNeXt to MRI classification using Torchvision's
+implementation and ImageNet weights [1, 2].
 
 ## Feasibility review
 
@@ -15,65 +15,41 @@ Chosen project: ADNI classification with ConvNeXt, Hard difficulty.
 
 ### Scope and acceptance criteria
 
-The project investigates AD versus NC classification from ADNI MRI
-slices and whether prediction confidence can identify ambiguous patients
-for specialist review. A small CNN trained from scratch is compared
-with an ImageNet-pretrained ConvNeXt-Tiny.
+The project compares a CNN trained from scratch with a pretrained
+ConvNeXt-Tiny for AD versus NC classification. It also examines whether
+prediction confidence can help select patients for review.
 
-The original feasibility review specified five acceptance criteria:
+The five acceptance criteria were:
 
-1. Zero patient overlap between training, validation and test splits.
-2. ConvNeXt held-out test accuracy of at least 80%.
-3. Both models evaluated on the same split using Macro-F1, AUROC,
+1. No patient overlap between training, validation and test splits.
+2. ConvNeXt test slice accuracy of at least 80%.
+3. Evaluation of both models on the same split using Macro-F1, AUROC,
    AD sensitivity and NC specificity.
-4. Analysis of three to five misclassifications and a confidence-based
-   human-review rule.
-5. Documented GPU memory and inference latency, with experiments
+4. Analysis of three to five errors and a confidence-based review rule.
+5. Measurement of GPU memory and inference latency, with training
    feasible on one A100 GPU with 40 GB VRAM.
 
-The accuracy target is reported explicitly at slice level in the final
-results, alongside scan-level and patient-level evaluation.
+### Evidence and resource plan
 
-### Model choice and preliminary evidence
+The initial audit found 30,520 slices from 1,526 scans and 680 patients,
+with consistent patient labels. A patient-stratified split produced
+476 training, 102 validation and 102 test patients without overlap.
 
-ConvNeXt-Tiny connects convolutional feature learning, residual learning
-and transfer learning with supervised classification. The project applies
-the architecture to MRI classification rather than reproducing the
-paper's ImageNet experiments. Architecture and pretraining both change
-relative to the baseline, limiting causal interpretation.
+Before test evaluation, both models had completed 15 epochs on Rangpur.
+The CNN reached validation slice Macro-F1 of 0.8339 in 7.1 minutes;
+ConvNeXt reached 0.8600 in 21.1 minutes. These runs showed that the
+project was feasible with one A100 GPU and four CPU cores per job.
 
-The initial audit indexed 30,520 slices from 1,526 scans and 680 patients.
-Metadata checks found no conflicting patient labels. The patient split
-contained 476 training, 102 validation and 102 test patients, with no
-patient overlap.
+The main risks were patient leakage, unstable CNN validation results,
+ConvNeXt overfitting and confident errors. The plan used a fixed patient
+manifest, validation-based checkpoint selection and held-out testing.
+The smaller CNN was the fallback if ConvNeXt proved too costly.
 
-At preparation of the original review, both models had completed
-15 epochs. The CNN achieved validation slice Macro-F1 of 0.8339 in
-7.1 minutes, and ConvNeXt achieved 0.8600 in 21.1 minutes.
-These measurements demonstrated training feasibility on Rangpur.
-
-### Risks, resource plan and fallback
-
-The main risks were patient leakage, unstable CNN validation behaviour,
-ConvNeXt overfitting and confident prediction errors. The plan used a
-fixed patient manifest, validation-based checkpoint selection and a
-held-out test evaluation. GPU profiling and failure analysis were
-planned to assess practical limitations beyond classification accuracy.
-
-Experiments used one A100 GPU and four CPU cores per job. Measured
-training times supported this resource plan, although scheduler waiting
-time remained variable. The smaller CNN provided a fallback if
-ConvNeXt proved too costly or unreliable.
-
-The original review was prepared before test evaluation. Subsequent
-test, profiling and confidence findings are reported in their own
-sections; they are not presented as preliminary review evidence.
-
-### Review outcome and tutor feedback
+### Tutor feedback
 
 I completed the feasibility review on 23 October 2026. The tutor asked
-me to include a model diagram, prerequisites and training settings.
-These are now included in this report.
+for a model diagram, prerequisites and training settings, which are
+included in this report.
 
 ## Environment and prerequisites
 
@@ -93,9 +69,7 @@ per job.
 | Pillow | 12.3.0 |
 | Matplotlib | 3.11.1 |
 
-See `results/software_environment.txt` for the recorded environment.
-The operating-system information in that file was collected on a login
-node; GPU information came from completed training logs.
+The full environment record is in `results/software_environment.txt`.
 
 The commands below assume this project's Rangpur directory and an
 existing Conda environment named `torch`:
@@ -151,15 +125,11 @@ python dataset.py \
 
 Reuse the same manifest for all model comparisons.
 
-The 70/15/15 patient split reserves most patients for learning while keeping
-separate validation and test groups. Stratification preserves the patient
-class proportions as closely as possible. Patient grouping prevents slices
-or repeat scans from the same person appearing on both sides of an
-evaluation. The validation group is used for development and checkpoint
-selection; the test group is used for the final fixed-model comparison.
-The proportion is a practical allocation, not a demonstrated optimum.
-Combining the course's original folders creates a new internal evaluation;
-it is not an evaluation on the original supplied test partition.
+The 70/15/15 split keeps separate groups for training, model selection
+and final testing. Grouping by patient prevents repeat scans or slices
+from the same person appearing in different splits. Stratification
+preserves patient class proportions. This is a new internal split of
+the combined course data.
 
 ## Preprocessing
 
@@ -187,9 +157,7 @@ pooling to produce one value per channel. A two-layer classifier maps
 the resulting 256 features to NC and AD logits. Dropout with probability
 0.3 provides regularisation during training.
 
-This model is trained from random initialisation. It provides an
-implemented baseline for testing whether the larger pretrained model
-offers a useful improvement on the same patient split.
+The baseline starts from random weights.
 
 ### ConvNeXt-Tiny
 
@@ -215,15 +183,9 @@ is replaced by a linear layer with two outputs.
 
 ### Transfer learning and MRI input
 
-ConvNeXt starts from ImageNet-pretrained weights, then all parameters
-are fine-tuned on the ADNI training split. Pretraining supplies an
-initial representation rather than fixed MRI-specific knowledge.
-
-Each grayscale MRI slice is converted to three identical RGB channels
-to match the pretrained model's input. This does not add colour or
-three-dimensional information. ImageNet normalisation maintains the
-input convention used for pretraining. Applying the same preprocessing
-to the baseline keeps the input pipeline consistent.
+All ConvNeXt parameters are fine-tuned from ImageNet weights. Grayscale
+slices are copied into three identical channels to match its input.
+Both models use the same resizing and ImageNet normalisation.
 
 ### Learning objective and decision rule
 
@@ -345,8 +307,7 @@ python -u train.py \
   --batch-size 32 --workers 4
 ```
 
-These commands write metrics and prediction CSVs to separate directories.
-The reported experiments used the direct `evaluate.py` commands above.
+The test entry reproduced the results obtained with `evaluate.py`.
 
 ## Test results
 
@@ -358,10 +319,6 @@ The reported experiments used the direct `evaluate.py` commands above.
 | Scan | ConvNeXt-Tiny | 0.8652 | 0.8652 | 0.9435 |
 | Patient | CNN | 0.7843 | 0.7536 | 0.8797 |
 | Patient | ConvNeXt-Tiny | 0.8725 | 0.8507 | 0.9275 |
-
-At patient level, ConvNeXt correctly classified 89 of 102 patients.
-AD sensitivity was 0.7576 (25/33), and NC specificity was 0.9275 (64/69).
-There were eight false negatives and five false positives.
 
 Full validation and test metrics are in `results/metrics_summary.csv`.
 
@@ -387,21 +344,16 @@ classification threshold of 0.5.
 | patient | ConvNeXt-Tiny | NC | 69 | 0.8889 | 0.9275 | 0.9078 |
 | patient | ConvNeXt-Tiny | AD | 33 | 0.8333 | 0.7576 | 0.7937 |
 
-These values are taken from `results/confidence/per_class_metrics.csv`,
-which also contains validation results. At patient level, ConvNeXt's AD
-precision was 0.8333, but recall was 0.7576: eight of 33 AD patients
-were missed. The smaller CNN missed 11 AD patients. These class-specific
-results explain why overall accuracy alone is insufficient.
+Validation and test values are saved in
+`results/confidence/per_class_metrics.csv`.
 
 ## Training behaviour and test interpretation
 
 ![Training and validation curves](results/figures/training_curves.png)
 
-The CNN's training accuracy increased throughout training, but validation
-loss and Macro-F1 fluctuated substantially. Reducing the learning rate
-from 0.001 to 0.0001 improved the best validation slice Macro-F1 from
-0.8097 to 0.8339. This supports the final learning-rate choice, but does
-not establish the cause of the remaining instability.
+CNN training accuracy rose steadily, while validation loss and Macro-F1
+fluctuated. The run at learning rate 0.0001 achieved a best validation
+slice Macro-F1 of 0.8339, compared with 0.8097 at 0.001.
 
 ConvNeXt reached approximately 99.6% training accuracy by epoch 15,
 while validation accuracy remained between approximately 75% and 86%.
@@ -410,12 +362,9 @@ came from epoch 6, selected by validation slice Macro-F1.
 
 ![Test ROC curves](results/figures/test_roc.png)
 
-ConvNeXt achieved higher test AUROC than the CNN at slice, scan and
-patient levels. Aggregation produced higher observed accuracy than
-individual slice classification for ConvNeXt. However, slices, scans
-and patients are different evaluation units with different class
-distributions; these comparisons do not isolate aggregation as a
-causal source of improvement.
+ConvNeXt had higher test AUROC at all three levels. Its accuracy was
+82.54% per slice, 86.52% per scan and 87.25% per patient. These levels
+have different class distributions and sample counts.
 
 ![Test confusion matrices](results/figures/test_confusion_matrices.png)
 
@@ -428,9 +377,8 @@ The CNN missed 11 of 33 AD patients and incorrectly classified 11 of
 patients and five incorrectly flagged NC patients. Its AD sensitivity
 of 75.76% remained lower than its NC specificity of 92.75%.
 
-Patient-level Macro-F1 and class-specific results therefore provide
-information that overall accuracy can conceal. The remaining false
-negatives are a practical concern for any proposed screening use.
+ConvNeXt improved both classes, but still missed nearly one quarter
+of the AD patients.
 
 ## GPU inference resource comparison
 
@@ -448,25 +396,20 @@ benchmarking were disabled.
 | Peak allocated GPU memory (MiB) | 22.57 | 128.90 |
 | Peak reserved GPU memory (MiB) | 44.00 | 150.00 |
 
-Timing covers GPU forward inference and softmax. It excludes image
-loading, preprocessing and CPU-to-GPU transfer, so it is not an
-end-to-end patient processing time. Allocated memory includes the model,
-input and temporary tensors; reserved memory also includes the PyTorch
-allocator cache. These are inference measurements, not training peaks.
+Timing covers GPU forward inference and softmax, excluding image loading,
+preprocessing and transfer. Peak allocated memory includes the model,
+input and temporary tensors; reserved memory includes the allocator
+cache. Both measurements were taken during inference.
 
-ConvNeXt improved patient-level test accuracy by 8.82 percentage points,
-while requiring approximately 6.47 times the mean GPU inference latency
-and 5.71 times the peak allocated memory. The CNN therefore provides a
-lower-cost baseline, while ConvNeXt offers better predictive performance
-under the tested conditions.
+ConvNeXt gained 8.82 percentage points in patient accuracy, with 6.47
+times the mean inference latency and 5.71 times the allocated memory.
 
 Recorded profiles are in `results/resource_profiles/`.
 
 ## Prediction confidence and referral analysis
 
-Patient confidence was defined as max(P(AD), 1 - P(AD)), using the
-aggregated patient probability. Confidence describes the model's output;
-it is not a verified probability that an individual prediction is correct.
+Patient confidence was calculated as max(P(AD), 1 − P(AD)) from the
+aggregated patient probability.
 
 | Test measurement | CNN | ConvNeXt-Tiny |
 |---|---:|---:|
@@ -477,10 +420,9 @@ it is not a verified probability that an individual prediction is correct.
 | Predictions with confidence at least 0.90 | 22 | 64 |
 | Errors among those predictions | 0 | 2 |
 
-ConvNeXt had better overall Brier score and confidence ECE, but some
-errors remained highly confident. Its higher confidence on incorrect
-predictions shows why confidence alone cannot guarantee correctness.
-ECE is an empirical summary based on 102 patients and depends on binning.
+ConvNeXt had lower Brier score and ECE, although two of its predictions
+with confidence of at least 0.90 were wrong. ECE uses ten bins across
+102 patients.
 
 ### Validation-selected referral rule
 
@@ -502,20 +444,15 @@ at most 5%. The classification threshold remained fixed at P(AD) = 0.5.
 | Retained false positives | 1 | 2 |
 | Errors flagged for review | 20/22 | 7/13 |
 
-ConvNeXt retained more patients and required fewer reviews, but its
-retained test error rate was 7.5%, exceeding the 5% validation target.
-The CNN retained fewer patients and achieved a 3.77% retained error rate.
-The retained accuracies describe different subsets and coverage levels,
-so they cannot be treated as an equal-coverage comparison.
+ConvNeXt retained more patients, but its retained test error rate was
+7.5%, above the 5% validation target. The CNN retained fewer patients
+and had a 3.77% error rate. Their retained accuracies cover different
+subsets and must be read alongside coverage.
 
-Referral flags do not mean that errors were corrected. Human review
-outcomes, review time and downstream clinical benefit were not measured.
-
-This was an exploratory extension performed after the initial test
-results had been inspected. The script selected thresholds using
-validation data, then applied them unchanged to test predictions.
-The findings require independent confirmation and should not be
-described as a prospectively validated deployment policy.
+This analysis was developed after inspecting the initial test results.
+Thresholds were selected on validation patients and applied unchanged
+to test predictions. Review flags were counted; reviewer decisions
+were not measured.
 
 ![Patient confidence and referral analysis](results/confidence/confidence_analysis.png)
 
@@ -542,16 +479,12 @@ python -u predict.py \
   --output-dir ~/data/comp3710_a3_prediction_examples/convnext
 ```
 
-The script loads checkpoint weights without downloading pretrained
-weights or updating the model. It writes `resource_profile.json`,
-`prediction_examples.json` and `prediction_examples.png` in each output
-directory. Use `--split test` to display test examples instead; the
-benchmark input remains a validation slice for both models.
+The script writes `resource_profile.json`, `prediction_examples.json`
+and `prediction_examples.png`. Use `--split test` for test examples;
+the profiling input remains a validation slice.
 
-Each model input is a preprocessed tensor of shape (1, 3, 224, 224).
-The output is two logits, converted with softmax to P(AD); P(AD) >= 0.5
-predicts AD. The following are the first three recorded validation
-examples from the completed profiling job:
+The input tensor has shape (1, 3, 224, 224); the output contains NC
+and AD logits. The first three recorded validation examples were:
 
 | Example | True label | CNN P(AD) | CNN prediction | ConvNeXt P(AD) | ConvNeXt prediction |
 |---|---|---:|---|---:|---|
@@ -559,10 +492,8 @@ examples from the completed profiling job:
 | 2 | AD | 0.6133 | AD | 0.9986 | AD |
 | 3 | AD | 0.8438 | AD | 0.9974 | AD |
 
-These are slice-level predictions from different patients, selected in
-manifest order independently of model scores. All five recorded examples
-were AD patients. They demonstrate checkpoint usage, not balanced
-performance; final performance is measured on the full test split.
+Examples follow manifest order and come from different patients.
+All five recorded examples were AD slices.
 
 ### Reproduce the confidence analysis
 
@@ -573,35 +504,15 @@ Then run this CPU-only analysis from the project directory:
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python analyse_confidence.py
 ```
 
-The script reads `{slice,scan,patient}_predictions.csv` under
-`~/data/comp3710_a3_evaluation/{cnn,convnext}/{val,test}/`.
-It writes per-class metrics, confidence bins, patient confidence summaries,
-referral rules and plots to `results/confidence/`, replacing existing
-analysis outputs. It does not change checkpoints or source predictions.
+The script reads slice, scan and patient prediction CSVs from the
+CNN and ConvNeXt validation/test directories under
+`~/data/comp3710_a3_evaluation/`. It writes metrics, referral rules and
+plots to `results/confidence/`. Change `BASE` and `OUT` in the script
+for other paths; it has no command-line arguments.
 
-There are no command-line arguments. Set `BASE` and `OUT` near the top
-of `analyse_confidence.py` if different input or output paths are needed.
-Run model evaluation before this analysis; the Git repository does not
-contain the individual prediction CSVs.
-
-### Reproducibility limits
-
-The fixed split seed is 42. Training scripts record the configuration,
-metrics and elapsed time in `history.json`. Reusing the selected
-checkpoints reproduced validation metrics within numerical tolerance.
-Retraining is not guaranteed to reproduce identical weights or scores
-across GPUs and software versions. This study used one seed per final
-configuration and did not estimate between-run variation.
-
-### Source attribution
-
-`modules.py` defines the small CNN and wraps Torchvision's ConvNeXt-Tiny.
-The ConvNeXt architecture follows Liu et al. [1]; its backbone and
-pretrained weights come from Torchvision [2]. This project implements the
-ADNI data pipeline, binary-classification adaptation and evaluation
-workflow around those components. ImageNet normalisation uses the
-pretrained input convention; MRI resizing and training rotation are
-project preprocessing choices.
+Training configurations and epoch metrics are saved in `history.json`.
+Validation evaluation reproduced the selected checkpoints' saved scores
+within numerical tolerance.
 
 ## Figures
 
@@ -611,7 +522,6 @@ accuracy and Macro-F1. This plotting feature was added after the
 reported experiments and checked using their saved histories.
 The report figures were generated separately with `plot_results.py`.
 
-
 ```bash
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python plot_results.py
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python plot_architecture.py
@@ -620,14 +530,6 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python plot_architecture.py
 `plot_results.py` reads the saved training histories and prediction CSVs.
 It writes figures to `~/data/comp3710_a3_figures/`.
 `plot_architecture.py` writes to `results/figures/`.
-
-The repository includes training curves, test ROC curves, confusion
-matrices and the model architecture overview. The five selected error-case images are included below.
-
-Error cases were selected as the three most confident ConvNeXt
-patient-level false negatives and two most confident false positives.
-Each displayed MRI is one illustrative slice; the reported score is
-aggregated across the patient's scans.
 
 ## Failure-case analysis
 
@@ -646,183 +548,59 @@ decimal places. Predictions use a threshold of 0.5.
 | 4 | NC | 0.895 | AD | 0.875 | AD |
 | 5 | NC | 0.830 | AD | 0.456 | NC |
 
-### Case 1: both models missed AD
+The figure shows one illustrative slice per patient; the probabilities
+combine all of that patient's scans. These cases were selected for
+high-confidence errors.
 
-Both models predicted NC. The CNN probability was close to 0.5,
-but ConvNeXt strongly favoured NC. ConvNeXt's high confidence did
-not make this prediction reliable. Checking agreement between the
-two models would also fail to identify this error.
+- **Case 1:** both models missed AD. The CNN was close to the decision
+  threshold, while ConvNeXt strongly favoured NC.
+- **Case 2:** the CNN identified AD, but ConvNeXt predicted NC with
+  90.4% confidence.
+- **Case 3:** both missed AD. ConvNeXt's 87.4% confidence exceeded the
+  82% review threshold, so this error would be retained.
+- **Case 4:** both incorrectly predicted AD with high probabilities.
+  Agreement between the models would not flag this patient.
+- **Case 5:** the CNN identified NC, but ConvNeXt predicted AD. Its
+  83.0% confidence also passed the retention threshold.
 
-### Case 2: the baseline was correct
-
-The CNN correctly predicted AD, while ConvNeXt predicted NC with
-90.4% confidence. A model with better overall results can still
-perform worse on an individual patient. Model disagreement could
-be investigated as an additional review signal.
-
-### Case 3: another confident false negative
-
-ConvNeXt assigned only 0.126 probability to AD. Its confidence in
-the incorrect NC prediction was 87.4%, above the 82% retention
-threshold. This patient would therefore remain outside the review
-group. A confidence rule can miss precisely the errors that need
-attention.
-
-### Case 4: both models incorrectly predicted AD
-
-Both models gave high AD probabilities to an NC patient. This
-shows another limit of using model agreement as a reliability check.
-The next step would be to inspect image quality, acquisition details
-and predictions across the patient's scans. The current results
-do not establish which feature caused the shared error.
-
-### Case 5: a false positive retained by the confidence rule
-
-ConvNeXt predicted AD with probability 0.830, while the CNN correctly
-predicted NC. This ConvNeXt error would also pass the 0.82 confidence
-threshold. The illustrative slice appeared darker than several other
-examples, but this alone does not show that intensity caused the error.
-An intensity audit would be needed before changing preprocessing.
-
-These cases were selected for confident errors and are not a
-representative sample of the test set. The failure-case figure shows one illustrative slice per patient,
-while each patient prediction uses multiple slices and scans.
-The anatomical causes of the errors were not established.
-
-### Evidence from slice and scan predictions
-
-A further audit traced the five selected cases through the saved test
-predictions. Recomputing slice-to-scan and scan-to-patient means
-reproduced the saved probabilities within a tolerance of 1e-6.
-
-| Case | Slices / scans | CNN incorrect slices | CNN incorrect scans | ConvNeXt incorrect slices | ConvNeXt incorrect scans |
-|---|---|---|---|---|---|
-| 1 | 60 / 3 | 32/60 | 2/3 | 58/60 | 3/3 |
-| 2 | 20 / 1 | 5/20 | 0/1 | 19/20 | 1/1 |
-| 3 | 20 / 1 | 11/20 | 1/1 | 18/20 | 1/1 |
-| 4 | 20 / 1 | 20/20 | 1/1 | 19/20 | 1/1 |
-| 5 | 40 / 2 | 18/40 | 1/2 | 34/40 | 2/2 |
-
-For ConvNeXt, every scan in these five cases was misclassified, as were
-85.0% to 96.7% of the slices within each case. In Case 1, all three scan
-probabilities were below 0.5, ranging from 0.0017 to 0.1080 despite the
-AD label. In Case 5, both scans were incorrectly classified as AD, with
-probabilities from 0.8168 to 0.8431. The errors therefore existed before
-patient aggregation; averaging across scans did not reverse a correct
-scan-level majority in these cases.
-
-The CNN showed more disagreement within some patients. In Case 1,
-one of three scans correctly predicted AD, but the patient mean was
-0.4711 and produced an NC prediction. In Case 5, one scan incorrectly
-predicted AD, while the patient mean of 0.4560 correctly predicted NC.
-Aggregation can therefore conceal scan-level disagreement, although
-these examples do not show that a different aggregation rule would
-improve overall performance.
-
-Case 2 gives a direct contrast: the CNN correctly classified 15 of
-20 slices, whereas ConvNeXt correctly classified only one. This
-localises their difference to slice-level predictions, rather than
-disagreement between multiple scans.
-
-The audit identifies where the errors arose, but does not establish
-which anatomical features, image properties or training effects caused
-them. These selected confident errors cannot estimate how common each
-pattern is across the full test set. No model, threshold or aggregation
-rule was changed.
-
-Run `python analyse_failure_cases.py` from the project directory.
-It reads the previously generated failure-case details and test
-prediction CSVs under `~/data/`. The anonymised case summaries and
-scan details are saved in `results/failure_audit/`.
-
-### Remaining questions and follow-up checks
-
-The prediction audit narrows the aggregation explanation. ConvNeXt
-misclassified every scan in the five selected cases, so these errors
-cannot be explained solely by disagreement between scans being averaged
-into an incorrect patient prediction. It remains unclear why most
-individual slices were misclassified.
-
-- **Cases 1 and 3:** inspect the incorrectly classified slices alongside
-  correctly classified AD patients. The audit establishes widespread
-  slice-level errors, but does not identify their anatomical cause.
-- **Case 2:** the CNN correctly classified 15 of 20 slices and ConvNeXt
-  only one. Comparing their responses to the same slices could help
-  investigate the difference. The current evidence does not separate
-  architecture, pretraining or overfitting as its cause.
-- **Case 4:** both models misclassified the scan and nearly all slices.
-  Compare image quality and acquisition metadata with correctly
-  classified NC patients to investigate the shared error.
-- **Case 5:** both ConvNeXt scans were incorrect. The displayed slice
-  appears darker than the other examples, motivating an intensity and
-  contrast audit across all available slices. Brightness has not been
-  established as the cause.
-
-These checks are proposed follow-up work, not completed experiments.
-Any changes to preprocessing or aggregation should be developed on
-training and validation data and assessed on a new held-out cohort.
-The inspected test cases were used only for diagnosis; no model,
-classification threshold or referral threshold was changed.
+Cases 2 and 5 show that the stronger model still made errors the baseline
+avoided. Cases 1 and 4 show that agreement alone would miss shared
+errors. The darker slice in Case 5 suggests checking image intensity,
+and the other cases warrant examining predictions across slices and
+scans. The displayed images alone do not establish an anatomical cause.
 
 ## Practical recommendation
 
-ConvNeXt is the better candidate for further work in this experiment.
-It correctly classified 89 of 102 test patients, compared with 80
-for the CNN, but used more GPU memory and took longer per slice.
+ConvNeXt is the stronger model for further work, correctly classifying
+89 of 102 test patients versus 80 for the CNN. The CNN remains useful
+where lower memory use and latency matter.
 
-The confidence rule reduced the number of patients flagged for review
-to 22 of 102. It captured seven of ConvNeXt's 13 errors, but six
-errors remained among the retained predictions, including four
-missed AD patients. This is not sufficient evidence for using the
-model to rule out AD without review.
-
-Before using this approach in practice, the review rule should be
-tested on an independent cohort. That study should also measure
-review time, reviewer decisions and performance across acquisition
-conditions. The CNN remains a useful low-cost baseline.
+The confidence rule flagged seven of ConvNeXt's 13 errors, but left
+six among retained patients, including four missed AD cases. Further
+assessment should use an independent cohort and record reviewer
+accuracy and time.
 
 ## Limitations
 
-Results come from one patient split and one training seed per final
-configuration. This comparison changes architecture, pretraining and
-batch size, so it does not isolate the effect of architecture alone.
-
-ConvNeXt fitted the training set closely, while validation performance
-remained lower. CNN validation metrics fluctuated substantially.
-The causes of these fluctuations were not established.
-
-Patient-level test evaluation contains 102 patients, including 33 AD
-patients. No external dataset validation was performed. Selected error
-examples do not establish the frequency or anatomical cause of a
-failure pattern.
+The experiments used one patient split and one seed per final model,
+with 102 test patients, including 33 AD patients. Architecture,
+pretraining and batch size all changed between models, so their effects
+cannot be separated. ConvNeXt showed a training–validation gap, and CNN
+validation scores fluctuated. No external validation was performed.
 
 ## Artificial Intelligence Usage Disclosure
 
-I used OpenAI ChatGPT for technical explanations, implementation assistance,
-troubleshooting and report preparation. Its contribution included code
-drafts and suggested revisions.
+I used OpenAI ChatGPT for technical explanations, implementation assistance, troubleshooting and report preparation. Its contribution included code drafts and suggested revisions.
 
 AI assistance included:
 
-- Discussing dataset indexing and patient-independent splitting, and helping
-  draft the implementation. I ran the split audit and checked patient
-  separation and label consistency.
-- Helping draft and revise the CNN baseline, ConvNeXt integration, and
-  training and evaluation code. I tested the code on Rangpur and checked
-  the logs and metrics.
-- Explaining Slurm commands and error messages. I applied the job settings,
-  submitted jobs and checked their outputs.
-- Helping write plotting, inference profiling and confidence-analysis code,
-  and discussing the results. I examined the model comparisons and
-  prediction errors to assess the findings.
-- Helping organise the README and revise explanations of the methods,
-  results and limitations.
+- Discussing dataset indexing and patient-independent splitting, and helping draft the implementation. I ran the split audit and checked patient separation and label consistency.
+- Helping draft and revise the CNN baseline, ConvNeXt integration, and training and evaluation code. I tested the code on Rangpur and checked the logs and metrics.
+- Explaining Slurm commands and error messages. I applied the job settings, submitted jobs and checked their outputs.
+- Helping write plotting, inference profiling and confidence-analysis code, and discussing the results. I examined the model comparisons and prediction errors to assess the findings.
+- Helping organise the README and revise explanations of the methods, results and limitations.
 
-I ran the experiments on the UQ Rangpur cluster and checked the outputs,
-including patient separation, reproduced validation results and prediction
-errors. I used these checks to assess the AI-assisted code and explanations.
-All reported numerical results came from the executed experiments and
-saved outputs.
+I ran the experiments on the UQ Rangpur cluster and checked the outputs, including patient separation, reproduced validation results and prediction errors. I used these checks to assess the AI-assisted code and explanations. All reported numerical results came from the executed experiments and saved outputs.
 
 ## References
 
